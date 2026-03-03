@@ -102,6 +102,7 @@ class SessionListItem(BaseModel):
     total_erector_only: int | None = None
     total_mfc_only:    int | None = None
     total_partial:     int | None = None
+    total_high_risk:   int | None = None
     created_at:        datetime | None = None
     completed_at:      datetime | None = None
 
@@ -175,8 +176,9 @@ class ActionItemRow(BaseModel):
     risk_level:    str | None     = None
     risk_notes:    str | None     = None
     ai_reasoning:  str | None     = None
-    category_id:   int | None     = None
-    mfc_item_type: str | None     = None
+    category_id:      int | None     = None
+    mfc_exclusion_id: int | None     = None
+    mfc_item_type:    str | None     = None
 
 
 class ActionItemSummary(BaseModel):

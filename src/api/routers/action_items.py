@@ -48,6 +48,7 @@ async def get_session_action_items(
             m.RiskNotes,
             m.AiReasoning,
             m.CategoryId,
+            m.MfcExclusionId,
             ee.RawText      AS ErectorExclusionText,
             mfc.Exclusion   AS MfcExclusionText,
             mfc.ItemType    AS MfcItemType
@@ -93,6 +94,7 @@ async def get_session_action_items(
         "RiskNotes":              "risk_notes",
         "AiReasoning":            "ai_reasoning",
         "CategoryId":             "category_id",
+        "MfcExclusionId":         "mfc_exclusion_id",
         "ErectorExclusionText":   "erector_text",
         "MfcExclusionText":       "mfc_text",
         "MfcItemType":            "mfc_item_type",

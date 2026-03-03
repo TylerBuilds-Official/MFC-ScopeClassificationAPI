@@ -31,14 +31,19 @@ async def list_sessions(
     params: list = []
 
     if status:
-        where += " AND Status = ?"
+        where += " AND s.Status = ?"
         params.append(status)
 
     sql = f"""
-        SELECT *
-        FROM {db.schema}.AnalysisSessions
+        SELECT s.*,
+               (SELECT COUNT(*)
+                FROM {db.schema}.ExclusionMatches m
+                WHERE m.SessionId = s.Id
+                  AND m.RiskLevel IN ('Critical', 'High')
+               ) AS TotalHighRisk
+        FROM {db.schema}.AnalysisSessions s
         {where}
-        ORDER BY Id DESC
+        ORDER BY s.Id DESC
         OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
     """
     params.extend([offset, limit])
@@ -61,6 +66,7 @@ async def list_sessions(
         "TotalErectorOnly": "total_erector_only",
         "TotalMfcOnly":     "total_mfc_only",
         "TotalPartial":     "total_partial",
+        "TotalHighRisk":    "total_high_risk",
         "CreatedAt":        "created_at",
         "CompletedAt":      "completed_at",
     }

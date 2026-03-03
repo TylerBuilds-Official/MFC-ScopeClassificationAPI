@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from scope_classification import ScopeAnalysisEngine, SessionRepo
 
+from ..auth import User, require_role
 from ..dependencies import get_engine, get_job_runner, get_session_repo
 from ..job_runner import JobRunner
 
@@ -27,7 +28,8 @@ async def analyze_scope_letter(
         archive:      bool              = Form(True),
         file:         UploadFile | None = File(None),
         engine: ScopeAnalysisEngine     = Depends(get_engine),
-        runner: JobRunner               = Depends(get_job_runner) ) -> dict:
+        runner: JobRunner               = Depends(get_job_runner),
+        user:   User                    = Depends(require_role("estimator", "admin")) ) -> dict:
     """
 
     Launch the full extract → classify → compare pipeline in the background.
@@ -37,6 +39,9 @@ async def analyze_scope_letter(
     """
 
     pdf_path = _resolve_pdf(network_path, file)
+
+    # Auto-populate initiated_by from authenticated user if not supplied
+    resolved_initiator = initiated_by or user.display_name
 
     # Pre-create the session so we can return the id immediately.
     # Resolve erector the same way the engine does internally.
@@ -50,7 +55,7 @@ async def analyze_scope_letter(
         job_number       = job_number,
         job_name         = job_name,
         source_file_path = pdf_path,
-        initiated_by     = initiated_by,
+        initiated_by     = resolved_initiator,
     )
 
     # Spawn background thread for the heavy lifting

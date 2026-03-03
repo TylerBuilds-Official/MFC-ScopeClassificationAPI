@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from scope_classification import ExclusionRepo
 
+from ..auth import User, require_active_user, require_role
 from ..dependencies import get_exclusion_repo, get_db
 
 
@@ -25,7 +26,8 @@ class CategoryUpdate(BaseModel):
 
 @router.get("")
 async def list_categories(
-        repo: ExclusionRepo = Depends(get_exclusion_repo) ) -> dict:
+        repo: ExclusionRepo = Depends(get_exclusion_repo),
+        user: User          = Depends(require_active_user) ) -> dict:
     """All exclusion categories from the reference table."""
 
     categories = repo.get_all_categories()
@@ -34,7 +36,9 @@ async def list_categories(
 
 
 @router.get("/heatmap")
-async def category_heatmap(db = Depends(get_db)) -> dict:
+async def category_heatmap(
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> dict:
     """Gap distribution matrix: category × match type across all sessions."""
 
     sql = f"""
@@ -57,7 +61,10 @@ async def category_heatmap(db = Depends(get_db)) -> dict:
 
 
 @router.post("")
-async def create_category(body: CategoryCreate, db = Depends(get_db)) -> dict:
+async def create_category(
+        body: CategoryCreate,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Create a new scope category."""
 
     sql = f"""
@@ -79,7 +86,11 @@ async def create_category(body: CategoryCreate, db = Depends(get_db)) -> dict:
 
 
 @router.put("/{category_id}")
-async def update_category(category_id: int, body: CategoryUpdate, db = Depends(get_db)) -> dict:
+async def update_category(
+        category_id: int,
+        body: CategoryUpdate,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Update an existing scope category."""
 
     sets   = []
@@ -117,7 +128,10 @@ async def update_category(category_id: int, body: CategoryUpdate, db = Depends(g
 
 
 @router.delete("/{category_id}")
-async def delete_category(category_id: int, db = Depends(get_db)) -> dict:
+async def delete_category(
+        category_id: int,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("admin")) ) -> dict:
     """Delete a scope category. Fails if MFC exclusions still reference it."""
 
     # Check for references

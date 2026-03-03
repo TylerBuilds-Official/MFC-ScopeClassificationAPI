@@ -212,3 +212,47 @@ class ActionItemBatchUpdate(BaseModel):
 
     item_ids: list[int]
     status:   str
+
+
+# ── Training ─────────────────────────────────────────────────────────
+
+class TrainingQueueItem(BaseModel):
+    """Single item in the training review queue."""
+
+    extraction_id:             int
+    raw_text:                  str
+    normalized_text:           str | None = None
+    category_id:               int
+    category_name:             str
+    classification_confidence: float
+    session_id:                int
+    erector_name:              str | None = None
+    job_number:                str | None = None
+    job_name:                  str | None = None
+
+
+class TrainingQueueResponse(BaseModel):
+    """Paginated training queue with stats."""
+
+    items:           list[TrainingQueueItem]
+    total_pending:   int
+    total_verified:  int
+    total_overridden: int
+    max_confidence:  float
+
+
+class TrainingVerification(BaseModel):
+    """Body for submitting a verification or correction."""
+
+    extraction_id: int
+    category_id:   int
+    verified_by:   str | None = None
+
+
+class TrainingStatsResponse(BaseModel):
+    """Overview stats for the training system."""
+
+    total_verified:   int
+    total_overridden: int
+    total_pending:    int
+    accuracy_rate:    float | None = None

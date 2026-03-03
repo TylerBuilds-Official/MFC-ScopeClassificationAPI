@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from scope_classification import MatchRepo
 
+from ..auth import User, require_active_user
 from ..dependencies import get_match_repo, get_db
 from ..schemas import MatchRow, MatchListResponse
 
@@ -19,7 +20,8 @@ async def get_session_matches(
         session_id: int,
         risk: str | None        = None,
         category_id: int | None = None,
-        db                      = Depends(get_db) ) -> MatchListResponse:
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> MatchListResponse:
     """
 
     All matches for a session with erector + MFC exclusion text joined in.
@@ -95,7 +97,8 @@ async def get_session_matches(
 @router.get("/high-risk")
 async def get_high_risk(
         limit: int = 100,
-        db = Depends(get_db) ) -> dict:
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> dict:
     """
 
     Cross-session high-risk matches with exclusion text, ordered by most recent.

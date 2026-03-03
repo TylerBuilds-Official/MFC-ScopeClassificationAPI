@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..auth import User, require_active_user, require_role
 from ..dependencies import get_db, get_exclusion_repo
 from scope_classification import ExclusionRepo
 
@@ -27,7 +28,8 @@ class MfcExclusionUpdate(BaseModel):
 @router.get("")
 async def list_mfc_exclusions(
         category_id: int | None = None,
-        repo: ExclusionRepo = Depends(get_exclusion_repo) ) -> dict:
+        repo: ExclusionRepo = Depends(get_exclusion_repo),
+        user: User          = Depends(require_active_user) ) -> dict:
     """All MFC exclusions, optionally filtered by category."""
 
     exclusions = repo.get_mfc_exclusions(category_id)
@@ -36,7 +38,10 @@ async def list_mfc_exclusions(
 
 
 @router.get("/{exclusion_id}")
-async def get_mfc_exclusion(exclusion_id: int, db = Depends(get_db)) -> dict:
+async def get_mfc_exclusion(
+        exclusion_id: int,
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> dict:
     """Single MFC exclusion by Id."""
 
     sql    = f"SELECT * FROM {db.schema}.MfcExclusions WHERE Id = ?"
@@ -52,7 +57,10 @@ async def get_mfc_exclusion(exclusion_id: int, db = Depends(get_db)) -> dict:
 
 
 @router.post("")
-async def create_mfc_exclusion(body: MfcExclusionCreate, db = Depends(get_db)) -> dict:
+async def create_mfc_exclusion(
+        body: MfcExclusionCreate,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Create a new MFC exclusion."""
 
     sql = f"""
@@ -74,7 +82,11 @@ async def create_mfc_exclusion(body: MfcExclusionCreate, db = Depends(get_db)) -
 
 
 @router.put("/{exclusion_id}")
-async def update_mfc_exclusion(exclusion_id: int, body: MfcExclusionUpdate, db = Depends(get_db)) -> dict:
+async def update_mfc_exclusion(
+        exclusion_id: int,
+        body: MfcExclusionUpdate,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Update an existing MFC exclusion."""
 
     sets   = []
@@ -117,7 +129,10 @@ async def update_mfc_exclusion(exclusion_id: int, body: MfcExclusionUpdate, db =
 
 
 @router.delete("/{exclusion_id}")
-async def delete_mfc_exclusion(exclusion_id: int, db = Depends(get_db)) -> dict:
+async def delete_mfc_exclusion(
+        exclusion_id: int,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Delete an MFC exclusion."""
 
     cursor = db.execute(

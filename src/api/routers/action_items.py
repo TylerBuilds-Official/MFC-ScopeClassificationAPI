@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..auth import User, require_active_user, require_role
 from ..dependencies import get_db
 from ..schemas import (
     ActionItemRow,
@@ -29,7 +30,8 @@ VALID_STATUSES = {"unreviewed", "acknowledged", "addressed", "dismissed"}
 )
 async def get_session_action_items(
         session_id: int,
-        db = Depends(get_db) ) -> ActionItemListResponse:
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> ActionItemListResponse:
     """All action items for a session with match data joined in."""
 
     sql = f"""
@@ -124,7 +126,8 @@ async def get_session_action_items(
 @router.patch("/batch")
 async def batch_update_action_items(
         body: ActionItemBatchUpdate,
-        db = Depends(get_db) ) -> dict:
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Bulk status update for multiple action items."""
 
     if body.status not in VALID_STATUSES:
@@ -154,7 +157,8 @@ async def batch_update_action_items(
 async def update_action_item(
         item_id: int,
         body:    ActionItemUpdate,
-        db = Depends(get_db) ) -> dict:
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Update status and/or notes on a single action item."""
 
     sets:   list[str] = []
@@ -188,7 +192,8 @@ async def update_action_item(
 @router.post("/session/{session_id}/generate")
 async def generate_action_items(
         session_id: int,
-        db = Depends(get_db) ) -> dict:
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """Generate (or regenerate) action items from session matches."""
 
     count = generate_action_items_for_session(db, session_id)

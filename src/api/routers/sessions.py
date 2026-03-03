@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from scope_classification import SessionRepo, MatchRepo
 
+from ..auth import User, require_active_user, require_role
 from ..dependencies import get_session_repo, get_match_repo, get_db, get_job_runner
 from ..job_runner import JobRunner
 from ..schemas import SessionListItem, SessionListResponse
@@ -21,13 +22,14 @@ async def list_sessions(
         offset: int = 0,
         status: str | None = None,
         repo: SessionRepo  = Depends(get_session_repo),
-        db = Depends(get_db) ) -> SessionListResponse:
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> SessionListResponse:
     """
 
     Paginated session grid with optional status filter.
     """
 
-    where  = "WHERE 1=1"
+    where  = "WHERE s.IsDeleted = 0"
     params: list = []
 
     if status:
@@ -82,8 +84,9 @@ async def list_sessions(
 @router.get("/{session_id}")
 async def get_session(
         session_id: int,
-        repo: SessionRepo = Depends(get_session_repo),
-        match_repo: MatchRepo = Depends(get_match_repo) ) -> dict:
+        repo: SessionRepo  = Depends(get_session_repo),
+        match_repo: MatchRepo = Depends(get_match_repo),
+        user: User = Depends(require_active_user) ) -> dict:
     """
 
     Full session detail including match summary.
@@ -105,7 +108,8 @@ async def get_session(
 async def update_session(
         session_id: int,
         body: dict,
-        db = Depends(get_db) ) -> dict:
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
     """
 
     Update editable session metadata (erector name, job number, job name).
@@ -145,8 +149,9 @@ async def update_session(
 @router.get("/{session_id}/progress")
 async def get_session_progress(
         session_id: int,
-        repo: SessionRepo = Depends(get_session_repo),
-        runner: JobRunner  = Depends(get_job_runner) ) -> dict:
+        repo:   SessionRepo = Depends(get_session_repo),
+        runner: JobRunner   = Depends(get_job_runner),
+        user:   User        = Depends(require_active_user) ) -> dict:
     """
 
     Lightweight progress check for a running analysis.
@@ -185,3 +190,35 @@ async def get_session_progress(
         "total_partial":    session.get("TotalPartial"),
         "error_message":    session.get("ErrorMessage"),
     }
+
+
+@router.delete("/{session_id}")
+async def soft_delete_session(
+        session_id: int,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("admin")) ) -> dict:
+    """Soft-delete a session. Admin only."""
+
+    cursor = db.execute(
+        f"SELECT Id, IsDeleted FROM {db.schema}.AnalysisSessions WHERE Id = ?",
+        (session_id,),
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    if row[1]:  # already deleted
+        return {"deleted": session_id, "already": True}
+
+    db.execute(
+        f"""
+        UPDATE {db.schema}.AnalysisSessions
+        SET IsDeleted = 1, DeletedAt = SYSUTCDATETIME(), DeletedBy = ?
+        WHERE Id = ?
+        """,
+        (user.display_name, session_id),
+    )
+    db.commit()
+
+    return {"deleted": session_id}

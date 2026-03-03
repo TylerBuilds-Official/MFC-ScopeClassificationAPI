@@ -8,6 +8,7 @@ from scope_classification import (
     SessionRepo,
     MatchRepo,
     ExclusionRepo,
+    TrainingRepo,
 )
 
 from .job_runner import JobRunner
@@ -56,6 +57,12 @@ def get_exclusion_repo(request: Request) -> ExclusionRepo:
     """
 
     return ExclusionRepo(request.app.state.engine._db)
+
+
+def get_training_repo(request: Request) -> TrainingRepo:
+    """Build a TrainingRepo from the engine's connection factory."""
+
+    return TrainingRepo(request.app.state.engine._db)
 
 
 def get_job_runner(request: Request) -> JobRunner:

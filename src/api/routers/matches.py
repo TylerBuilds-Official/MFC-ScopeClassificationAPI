@@ -52,7 +52,8 @@ async def get_session_matches(
             m.RiskNotes,
             ee.RawText          AS ErectorExclusionText,
             mfc.Exclusion       AS MfcExclusionText,
-            mfc.ItemType        AS MfcItemType
+            mfc.ItemType        AS MfcItemType,
+            mfc.ScopeType       AS MfcScopeType
         FROM {db.schema}.ExclusionMatches m
         LEFT JOIN {db.schema}.ExtractedExclusions ee
             ON ee.Id = m.ExtractedExclusionId
@@ -80,6 +81,7 @@ async def get_session_matches(
         "ErectorExclusionText":   "erector_text",
         "MfcExclusionText":       "mfc_text",
         "MfcItemType":            "mfc_item_type",
+        "MfcScopeType":           "mfc_scope_type",
     }
 
     matches = []
@@ -112,7 +114,8 @@ async def get_high_risk(
             s.SourceFileName,
             ee.RawText      AS ErectorExclusionText,
             mfc.Exclusion   AS MfcExclusionText,
-            mfc.ItemType    AS MfcItemType
+            mfc.ItemType    AS MfcItemType,
+            mfc.ScopeType   AS MfcScopeType
         FROM {db.schema}.ExclusionMatches m
         JOIN {db.schema}.AnalysisSessions s ON s.Id = m.SessionId
         LEFT JOIN {db.schema}.ExtractedExclusions ee

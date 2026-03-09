@@ -15,6 +15,7 @@ class MfcExclusionCreate(BaseModel):
     category_id: int
     exclusion:   str
     item_type:   str = "Exclusion"
+    scope_type:  str = "Supply"
     sort_order:  int = 0
 
 
@@ -22,17 +23,19 @@ class MfcExclusionUpdate(BaseModel):
     category_id: int | None = None
     exclusion:   str | None = None
     item_type:   str | None = None
+    scope_type:  str | None = None
     sort_order:  int | None = None
 
 
 @router.get("")
 async def list_mfc_exclusions(
         category_id: int | None = None,
+        scope_type: str | None  = None,
         repo: ExclusionRepo = Depends(get_exclusion_repo),
         user: User          = Depends(require_active_user) ) -> dict:
-    """All MFC exclusions, optionally filtered by category."""
+    """All MFC exclusions, optionally filtered by category and/or scope type."""
 
-    exclusions = repo.get_mfc_exclusions(category_id)
+    exclusions = repo.get_mfc_exclusions(category_id=category_id, scope_type=scope_type)
 
     return {"exclusions": exclusions, "count": len(exclusions)}
 
@@ -64,12 +67,12 @@ async def create_mfc_exclusion(
     """Create a new MFC exclusion."""
 
     sql = f"""
-        INSERT INTO {db.schema}.MfcExclusions (CategoryId, Exclusion, ItemType, SortOrder)
+        INSERT INTO {db.schema}.MfcExclusions (CategoryId, Exclusion, ItemType, ScopeType, SortOrder)
         OUTPUT INSERTED.*
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
     """
 
-    cursor = db.execute(sql, (body.category_id, body.exclusion, body.item_type, body.sort_order))
+    cursor = db.execute(sql, (body.category_id, body.exclusion, body.item_type, body.scope_type, body.sort_order))
     row    = cursor.fetchone()
     db.commit()
 
@@ -103,6 +106,10 @@ async def update_mfc_exclusion(
     if body.item_type is not None:
         sets.append("ItemType = ?")
         params.append(body.item_type)
+
+    if body.scope_type is not None:
+        sets.append("ScopeType = ?")
+        params.append(body.scope_type)
 
     if body.sort_order is not None:
         sets.append("SortOrder = ?")

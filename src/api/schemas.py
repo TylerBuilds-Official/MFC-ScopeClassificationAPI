@@ -130,6 +130,7 @@ class MatchRow(BaseModel):
     erector_text:             str | None = None
     mfc_text:                 str | None = None
     mfc_item_type:            str | None = None
+    mfc_scope_type:           str | None = None
 
 
 class MatchListResponse(BaseModel):

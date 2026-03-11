@@ -12,6 +12,7 @@ from scope_classification import (
 )
 
 from .job_runner import JobRunner
+from .services.cross_erector import CrossErectorComparisonEngine
 
 
 def get_engine(request: Request) -> ScopeAnalysisEngine:
@@ -69,3 +70,15 @@ def get_job_runner(request: Request) -> JobRunner:
     """Return the lifespan-initialised job runner."""
 
     return request.app.state.job_runner
+
+
+def get_comparison_engine(request: Request) -> CrossErectorComparisonEngine:
+    """Build a CrossErectorComparisonEngine from the lifespan engine."""
+
+    engine = request.app.state.engine
+
+    return CrossErectorComparisonEngine(
+        db     = engine._db,
+        claude = engine._claude,
+        engine = engine,
+    )

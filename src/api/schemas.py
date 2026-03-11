@@ -257,3 +257,93 @@ class TrainingStatsResponse(BaseModel):
     total_overridden: int
     total_pending:    int
     accuracy_rate:    float | None = None
+
+
+# ── Cross-Erector Comparison ─────────────────────────────────────────
+
+class ComparisonCreateRequest(BaseModel):
+    """Body for POST /api/comparison — create from existing analysis sessions."""
+
+    session_ids:  list[int]
+    job_number:   str | None = None
+    job_name:     str | None = None
+    initiated_by: str | None = None
+
+
+class ComparisonAddErectorRequest(BaseModel):
+    """Body for POST /api/comparison/{id}/add — add erector to existing comparison."""
+
+    analysis_session_id: int
+
+
+class ComparisonErectorOut(BaseModel):
+    """Erector linked to a comparison session."""
+
+    analysis_session_id: int
+    erector_name:        str | None = None
+    sort_order:          int        = 0
+    job_number:          str | None = None
+    source_file_name:    str | None = None
+
+
+class ComparisonCoverageCell(BaseModel):
+    """Single erector's coverage of a unified item."""
+
+    type:                   str             # 'Excludes' | 'Includes' | 'NotMentioned'
+    raw:                    str | None = None
+    extracted_exclusion_id: int | None = None
+
+
+class ComparisonUnifiedItem(BaseModel):
+    """Canonical scope item with coverage across all erectors."""
+
+    id:          int
+    description: str
+    category_id: int | None                               = None
+    category:    str | None                               = None
+    sort_order:  int                                       = 0
+    coverage:    dict[str, ComparisonCoverageCell]         = {}
+
+
+class ComparisonSessionOut(BaseModel):
+    """Comparison session header."""
+
+    id:             int
+    job_number:     str | None = None
+    job_name:       str | None = None
+    initiated_by:   str | None = None
+    status:         str        = "Pending"
+    total_erectors: int        = 0
+    total_unified:  int        = 0
+    created_at:     str | None = None
+    completed_at:   str | None = None
+    error_message:  str | None = None
+
+
+class ComparisonResultOut(BaseModel):
+    """Full comparison result."""
+
+    comparison_session: ComparisonSessionOut
+    erectors:           list[ComparisonErectorOut]
+    unified_items:      list[ComparisonUnifiedItem]
+
+
+class ComparisonListItem(BaseModel):
+    """Summary row for comparison list."""
+
+    id:             int
+    job_number:     str | None = None
+    job_name:       str | None = None
+    status:         str        = "Pending"
+    total_erectors: int        = 0
+    total_unified:  int        = 0
+    initiated_by:   str | None = None
+    created_at:     str | None = None
+    erector_names:  list[str]  = []
+
+
+class ComparisonListResponse(BaseModel):
+    """Response for GET /api/comparison."""
+
+    comparisons: list[ComparisonListItem]
+    count:       int

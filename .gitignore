@@ -6,5 +6,5 @@ docs/
 .env
 .env.example
 
+planning/
 test_main.http
-RefactorPlan.md

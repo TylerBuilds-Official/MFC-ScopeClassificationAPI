@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from scope_classification import ScopeAnalysisEngine
 
 from .job_runner import JobRunner
-from .routers import sessions, matches, categories, exclusions, analyze, action_items, training, user_info, admin, export
+from .routers import sessions, matches, categories, exclusions, analyze, action_items, training, user_info, admin, export, comparison
 
 
 @asynccontextmanager
@@ -62,6 +62,7 @@ app.include_router(training.router,     prefix="/api/training",     tags=["Train
 app.include_router(user_info.router,    prefix="/api",              tags=["Auth"])
 app.include_router(admin.router,        prefix="/api/admin",        tags=["Admin"])
 app.include_router(export.router,       prefix="/api/export",       tags=["Export"])
+app.include_router(comparison.router, prefix="/api/comparison", tags=["Comparison"])
 
 
 @app.get("/api/health")

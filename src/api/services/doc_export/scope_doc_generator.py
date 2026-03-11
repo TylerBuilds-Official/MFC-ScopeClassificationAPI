@@ -183,6 +183,151 @@ class ScopeDocGenerator:
         return buf.getvalue()
 
 
+    def build_editor_data(self, session_id: int) -> dict:
+        """Build structured JSON for the browser scope letter editor."""
+
+        session  = self._load_session(session_id)
+        matches  = self._load_session_matches_full(session_id)
+        mappings = self._load_template_mappings()
+
+        # Build MfcExclusionId -> best match row
+        match_lookup: dict[int, dict] = {}
+        for m in matches:
+            mfc_id = m['MfcExclusionId']
+            if not mfc_id:
+                continue
+            existing = match_lookup.get(mfc_id)
+            if not existing or m['MatchType'] == 'Partial':
+                match_lookup[mfc_id] = m
+
+        # Build mapping lookup keyed by para index
+        mappings_by_para: dict[int, list[dict]] = defaultdict(list)
+        for mp in mappings:
+            mappings_by_para[mp['ParaIndex']].append(mp)
+
+        # Load template and build paragraph data with run formatting
+        doc        = Document(self._template_path)
+        paragraphs = []
+
+        for idx, para in enumerate(doc.paragraphs):
+            text = para.text
+
+            # Paragraph-level formatting
+            pf         = para.paragraph_format
+            indent_emu = pf.left_indent
+            indent_in  = round(indent_emu / 914400, 2) if indent_emu else None
+
+            # Build region lookup: char position -> region data
+            region_map  = {}   # start_char -> region dict
+            region_ends = {}   # char_pos   -> True if inside a region
+            para_regions = []
+
+            for mp in mappings_by_para.get(idx, []):
+                mfc_id = mp['MfcExclusionId']
+                match  = match_lookup.get(mfc_id)
+
+                region = {
+                    'mfc_id':       mfc_id,
+                    'start':        mp['StartChar'],
+                    'end':          mp['EndChar'],
+                    'snippet':      mp['TemplateSnippet'],
+                    'match_type':   match['MatchType'] if match else None,
+                    'confidence':   float(match['Confidence']) if match and match['Confidence'] else None,
+                    'risk_level':   match['RiskLevel'] if match else None,
+                    'risk_notes':   match['RiskNotes'] if match else None,
+                    'ai_reasoning': match['AiReasoning'] if match else None,
+                    'erector_text': match['ErectorText'] if match else None,
+                }
+
+                region_map[mp['StartChar']] = region
+                para_regions.append(region)
+
+                for ci in range(mp['StartChar'], mp['EndChar']):
+                    region_ends[ci] = region
+
+            # Build segments by walking runs and splitting at region boundaries
+            segments = []
+            cum_pos  = 0
+
+            for run in para.runs:
+                run_text = run.text or ''
+                if not run_text:
+                    continue
+
+                bold      = run.bold or False
+                italic    = run.italic or False
+                underline = run.underline or False
+                size_pt   = round(run.font.size / 12700, 1) if run.font.size else None
+                color_hex = str(run.font.color.rgb) if run.font.color and run.font.color.rgb else None
+
+                # Split this run at region boundaries
+                cur_chars    = []
+                cur_region   = region_ends.get(cum_pos)
+
+                for offset, char in enumerate(run_text):
+                    char_pos   = cum_pos + offset
+                    char_region = region_ends.get(char_pos)
+
+                    if char_region is not cur_region and cur_chars:
+                        segments.append(self._make_segment(
+                            ''.join(cur_chars), bold, italic, underline, size_pt, color_hex, cur_region,
+                        ))
+                        cur_chars = []
+
+                    cur_region = char_region
+                    cur_chars.append(char)
+
+                if cur_chars:
+                    segments.append(self._make_segment(
+                        ''.join(cur_chars), bold, italic, underline, size_pt, color_hex, cur_region,
+                    ))
+
+                cum_pos += len(run_text)
+
+            paragraphs.append({
+                'index':    idx,
+                'text':     text,
+                'indent':   indent_in,
+                'segments': segments,
+                'regions':  para_regions,
+            })
+
+        return {
+            'session': {
+                'id':       session.get('Id'),
+                'erector':  session.get('ErectorNameRaw'),
+                'job':      session.get('JobNumber'),
+                'job_name': session.get('JobName'),
+            },
+            'paragraphs': paragraphs,
+        }
+
+
+    @staticmethod
+    def _make_segment(
+            text: str, bold: bool, italic: bool,
+            underline: bool, size_pt: float | None,
+            color: str | None, region: dict | None ) -> dict:
+        """Build a single segment dict for the editor."""
+
+        seg: dict = {'text': text}
+
+        if bold:      seg['bold']      = True
+        if italic:    seg['italic']    = True
+        if underline: seg['underline'] = True
+        if size_pt:   seg['size']      = size_pt
+        if color:     seg['color']     = f'#{color}'
+
+        if region:
+            seg['region'] = {
+                'mfc_id':     region['mfc_id'],
+                'match_type': region['match_type'],
+                'risk_level': region['risk_level'],
+            }
+
+        return seg
+
+
     # ── DB queries ───────────────────────────────────────────────────
 
     def _load_session(self, session_id: int) -> dict:
@@ -215,6 +360,24 @@ class ScopeDocGenerator:
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
+    def _load_session_matches_full(self, session_id: int) -> list[dict]:
+        """Load match results with risk, reasoning, and erector text."""
+
+        sql = f"""
+            SELECT em.MfcExclusionId, em.MatchType, em.Confidence,
+                   em.RiskLevel, em.RiskNotes, em.AiReasoning,
+                   ee.RawText AS ErectorText
+            FROM {self._schema}.ExclusionMatches em
+            LEFT JOIN {self._schema}.ExtractedExclusions ee ON ee.Id = em.ExtractedExclusionId
+            WHERE em.SessionId = ? AND em.MfcExclusionId IS NOT NULL
+        """
+
+        cursor = self._db.execute(sql, (session_id,))
+        cols   = [col[0] for col in cursor.description]
+
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
     def _load_template_mappings(self) -> list[dict]:
         """Load all template mappings."""
 
@@ -233,7 +396,8 @@ class ScopeDocGenerator:
 
     # ── Helpers ──────────────────────────────────────────────────────
 
-    def _build_filename(self, session: dict) -> str:
+    @staticmethod
+    def _build_filename(session: dict) -> str:
         """Build output filename from session metadata."""
 
         job_number   = session.get('JobNumber') or 'NoJob'

@@ -7,3 +7,4 @@ docs/
 .env.example
 
 test_main.http
+RefactorPlan.md

@@ -217,6 +217,60 @@ class ScopeDocGenerator:
             indent_emu = pf.left_indent
             indent_in  = round(indent_emu / 914400, 2) if indent_emu else None
 
+            # Hanging indent: first line is outdented from left_indent
+            # In Word XML: w:ind left="2160" hanging="2160" means:
+            #   continuation lines at 1.5", first line at 0"
+            hanging_emu  = None
+            first_ln_emu = None
+            pPr = para._element.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr')
+            if pPr is not None:
+                ind = pPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind')
+                if ind is not None:
+                    hang_val = ind.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}hanging')
+                    first_val = ind.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}firstLine')
+                    left_val = ind.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left')
+
+                    if hang_val:
+                        hanging_emu = int(hang_val) * 635  # twips to EMU
+                    if first_val:
+                        first_ln_emu = int(first_val) * 635
+                    if left_val:
+                        indent_emu = int(left_val) * 635
+                        indent_in  = round(indent_emu / 914400, 2)
+
+            hanging_in   = round(hanging_emu / 914400, 2)  if hanging_emu  else None
+            first_line_in = round(first_ln_emu / 914400, 2) if first_ln_emu else None
+
+            # Alignment: 0=LEFT, 1=CENTER, 2=RIGHT, 3=JUSTIFY
+            alignment = None
+            if para.alignment is not None:
+                align_map = {0: 'left', 1: 'center', 2: 'right', 3: 'justify'}
+                alignment = align_map.get(int(para.alignment), None)
+
+            # Spacing before/after in points
+            space_before_pt = round(pf.space_before / 12700, 1) if pf.space_before else None
+            space_after_pt  = round(pf.space_after / 12700, 1)  if pf.space_after else None
+
+            # Line spacing
+            line_spacing = None
+            if pf.line_spacing is not None:
+                if pf.line_spacing_rule is not None and int(pf.line_spacing_rule) == 0:
+                    # Single / 1.5 / Double — stored as a multiple
+                    line_spacing = float(pf.line_spacing)
+                elif pf.line_spacing:
+                    # Exact or At Least — stored in EMU
+                    line_spacing_pt = round(pf.line_spacing / 12700, 1)
+                    line_spacing = line_spacing_pt
+
+            # Tab stops
+            tab_stops = []
+            if pf.tab_stops:
+                for ts in pf.tab_stops:
+                    tab_stops.append({
+                        'position_in': round(ts.position / 914400, 2),
+                        'alignment':   str(ts.alignment).split('(')[0].strip() if ts.alignment else 'LEFT',
+                    })
+
             # Build region lookup: char position -> region data
             region_map  = {}   # start_char -> region dict
             region_ends = {}   # char_pos   -> True if inside a region
@@ -285,11 +339,18 @@ class ScopeDocGenerator:
                 cum_pos += len(run_text)
 
             paragraphs.append({
-                'index':    idx,
-                'text':     text,
-                'indent':   indent_in,
-                'segments': segments,
-                'regions':  para_regions,
+                'index':        idx,
+                'text':         text,
+                'indent':       indent_in,
+                'hanging':      hanging_in,
+                'first_line':   first_line_in,
+                'alignment':    alignment,
+                'space_before': space_before_pt,
+                'space_after':  space_after_pt,
+                'line_spacing': line_spacing,
+                'tab_stops':    tab_stops if tab_stops else None,
+                'segments':     segments,
+                'regions':      para_regions,
             })
 
         return {

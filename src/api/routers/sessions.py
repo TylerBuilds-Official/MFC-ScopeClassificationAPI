@@ -20,7 +20,8 @@ router = APIRouter()
 async def list_sessions(
         limit: int  = 50,
         offset: int = 0,
-        status: str | None = None,
+        status: str | None       = None,
+        session_type: str | None = None,
         repo: SessionRepo  = Depends(get_session_repo),
         db   = Depends(get_db),
         user: User = Depends(require_active_user) ) -> SessionListResponse:
@@ -35,6 +36,10 @@ async def list_sessions(
     if status:
         where += " AND s.Status = ?"
         params.append(status)
+
+    if session_type:
+        where += " AND s.SessionType = ?"
+        params.append(session_type)
 
     sql = f"""
         SELECT s.*,
@@ -62,6 +67,7 @@ async def list_sessions(
         "JobName":          "job_name",
         "SourceFileName":   "source_file_name",
         "Status":           "status",
+        "SessionType":      "session_type",
         "TotalExtracted":   "total_extracted",
         "TotalClassified":  "total_classified",
         "TotalAligned":     "total_aligned",

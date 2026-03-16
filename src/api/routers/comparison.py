@@ -12,6 +12,7 @@ from scope_classification import ScopeAnalysisEngine, SessionStatus
 from ..auth import User, require_role, require_active_user
 from ..dependencies import get_comparison_engine, get_engine, get_job_runner, get_db
 from ..job_runner import JobRunner
+from .action_items import generate_action_items_for_session
 from ..schemas import (
     ComparisonCreateRequest,
     ComparisonAddErectorRequest,
@@ -262,7 +263,7 @@ async def list_comparisons(
     sql = f"""
         SELECT cs.Id, cs.JobNumber, cs.JobName, cs.Status,
                cs.TotalErectors, cs.TotalUnified, cs.InitiatedBy,
-               cs.CreatedAt
+               cs.CreatedAt, cs.SelectedSessionId
         FROM {db.schema}.ComparisonSessions cs
         ORDER BY cs.Id DESC
         OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
@@ -290,15 +291,16 @@ async def list_comparisons(
         erector_names = [r[0] for r in name_cursor.fetchall() if r[0]]
 
         comparisons.append(ComparisonListItem(
-            id             = cid,
-            job_number     = row["JobNumber"],
-            job_name       = row["JobName"],
-            status         = row["Status"],
-            total_erectors = row["TotalErectors"],
-            total_unified  = row["TotalUnified"],
-            initiated_by   = row["InitiatedBy"],
-            created_at     = str(row["CreatedAt"]) if row["CreatedAt"] else None,
-            erector_names  = erector_names,
+            id                  = cid,
+            job_number          = row["JobNumber"],
+            job_name            = row["JobName"],
+            status              = row["Status"],
+            total_erectors      = row["TotalErectors"],
+            total_unified       = row["TotalUnified"],
+            initiated_by        = row["InitiatedBy"],
+            created_at          = str(row["CreatedAt"]) if row["CreatedAt"] else None,
+            erector_names       = erector_names,
+            selected_session_id = row["SelectedSessionId"],
         ))
 
     return ComparisonListResponse(comparisons=comparisons, count=len(comparisons))
@@ -334,7 +336,7 @@ async def get_comparison_progress(
     cursor = db.execute(
         f"""
         SELECT Id, Status, TotalErectors, TotalUnified, ErrorMessage, CreatedAt,
-               CurrentPhase, ErectorsAnalyzed
+               CurrentPhase, ErectorsAnalyzed, SelectedSessionId
         FROM {db.schema}.ComparisonSessions
         WHERE Id = ?
         """,
@@ -363,14 +365,15 @@ async def get_comparison_progress(
         runner.cleanup(_comparison_job_key(comparison_id))
 
     return {
-        "comparison_id":      comparison_id,
-        "status":             session["Status"],
-        "is_active":          is_active,
-        "current_phase":      session["CurrentPhase"],
-        "erectors_analyzed":  session["ErectorsAnalyzed"],
-        "total_erectors":     session["TotalErectors"],
-        "total_unified":      session["TotalUnified"],
-        "error_message":      session["ErrorMessage"],
+        "comparison_id":        comparison_id,
+        "status":               session["Status"],
+        "is_active":            is_active,
+        "current_phase":        session["CurrentPhase"],
+        "erectors_analyzed":    session["ErectorsAnalyzed"],
+        "total_erectors":       session["TotalErectors"],
+        "total_unified":        session["TotalUnified"],
+        "error_message":        session["ErrorMessage"],
+        "selected_session_id":  session["SelectedSessionId"],
     }
 
 
@@ -416,6 +419,167 @@ async def delete_comparison(
     db.commit()
 
     return {"deleted": comparison_id}
+
+
+# -- Select / Deselect erector --------------------------------------------
+
+@router.post("/{comparison_id}/select-erector")
+async def select_erector(
+        comparison_id: int,
+        body:    dict,
+        engine:  ScopeAnalysisEngine = Depends(get_engine),
+        runner:  JobRunner           = Depends(get_job_runner),
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
+    """Select an erector for MFC review. Runs MFC compare + action items on the session."""
+
+    session_id = body.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    # Verify comparison exists
+    cursor = db.execute(
+        f"SELECT Id, SelectedSessionId FROM {db.schema}.ComparisonSessions WHERE Id = ?",
+        (comparison_id,),
+    )
+    comp_row = cursor.fetchone()
+    if not comp_row:
+        raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+
+    # Verify session belongs to this comparison
+    cursor = db.execute(
+        f"""
+        SELECT cse.AnalysisSessionId, cse.ErectorNameRaw
+        FROM {db.schema}.ComparisonSessionErectors cse
+        WHERE cse.ComparisonSessionId = ? AND cse.AnalysisSessionId = ?
+        """,
+        (comparison_id, session_id),
+    )
+    link = cursor.fetchone()
+    if not link:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session {session_id} is not part of comparison {comparison_id}",
+        )
+
+    erector_name = link[1]
+
+    # If a different session was previously selected, revert it
+    prev_selected = comp_row[1]
+    if prev_selected and prev_selected != session_id:
+        _revert_session_to_classified(db, prev_selected)
+
+    # Run MFC compare + action items in background
+    runner.submit(
+        session_id = session_id,
+        target     = _run_select_erector,
+        args       = (engine, db, comparison_id, session_id, erector_name),
+    )
+
+    return {
+        "comparison_id": comparison_id,
+        "session_id":    session_id,
+        "status":        "Running",
+        "message":       f"Running MFC comparison for {erector_name}",
+    }
+
+
+@router.post("/{comparison_id}/deselect-erector")
+async def deselect_erector(
+        comparison_id: int,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
+    """Clear erector selection. Reverts the selected session back to Classified."""
+
+    cursor = db.execute(
+        f"SELECT Id, SelectedSessionId FROM {db.schema}.ComparisonSessions WHERE Id = ?",
+        (comparison_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+
+    selected_id = row[1]
+    if not selected_id:
+        return {"comparison_id": comparison_id, "status": "no_selection"}
+
+    # Revert the session
+    _revert_session_to_classified(db, selected_id)
+
+    # Clear selection on comparison
+    db.execute(
+        f"UPDATE {db.schema}.ComparisonSessions SET SelectedSessionId = NULL, SelectedAt = NULL WHERE Id = ?",
+        (comparison_id,),
+    )
+    db.commit()
+
+    return {"comparison_id": comparison_id, "deselected_session_id": selected_id, "status": "deselected"}
+
+
+def _revert_session_to_classified(db, session_id: int) -> None:
+    """Revert a session from Complete back to Classified by removing MFC compare artifacts."""
+
+    schema = db.schema
+
+    # Delete action items
+    db.execute(f"DELETE FROM {schema}.ActionItems WHERE SessionId = ?", (session_id,))
+
+    # Delete match results
+    db.execute(f"DELETE FROM {schema}.ExclusionMatches WHERE SessionId = ?", (session_id,))
+
+    # Reset status and comparison counts
+    db.execute(
+        f"""
+        UPDATE {schema}.AnalysisSessions
+        SET Status = 'Classified', CompletedAt = NULL,
+            TotalAligned = NULL, TotalErectorOnly = NULL,
+            TotalMfcOnly = NULL, TotalPartial = NULL
+        WHERE Id = ?
+        """,
+        (session_id,),
+    )
+    db.commit()
+
+    log.info(f"Reverted session {session_id} to Classified")
+
+
+def _run_select_erector(
+        engine:        ScopeAnalysisEngine,
+        db,
+        comparison_id: int,
+        session_id:    int,
+        erector_name:  str ) -> None:
+    """Run MFC compare + action items on a classified session. Background thread."""
+
+    try:
+        # Run MFC comparison
+        comparison = engine._matcher.compare_session(session_id, erector_name=erector_name)
+        log.info(
+            f"  Select erector session {session_id}: "
+            f"Aligned={comparison.total_aligned} Partial={comparison.total_partial} "
+            f"ErectorOnly={comparison.total_erector_only} MfcOnly={comparison.total_mfc_only}"
+        )
+
+        # Generate action items
+        count = generate_action_items_for_session(db, session_id)
+        log.info(f"  Select erector session {session_id}: {count} action items generated")
+
+        # Mark selection on comparison
+        db.execute(
+            f"UPDATE {db.schema}.ComparisonSessions SET SelectedSessionId = ?, SelectedAt = SYSUTCDATETIME() WHERE Id = ?",
+            (session_id, comparison_id),
+        )
+        db.commit()
+
+        log.info(f"  Comparison {comparison_id}: selected session {session_id} ({erector_name})")
+
+    except Exception as exc:
+        log.error(f"  Select erector failed for session {session_id}: {exc}")
+
+        engine._session_repo.update_status(
+            session_id, SessionStatus.ERROR,
+            error_message=f"MFC comparison failed: {exc}",
+        )
 
 
 # -- Background pipeline functions ----------------------------------------
@@ -475,6 +639,13 @@ def _run_upload_pipeline(
 
             # Mark session as classified (not Complete — no MFC compare was done)
             engine._session_repo.update_status(session_id, SessionStatus.CLASSIFIED)
+
+            # Mark as comparison-sourced
+            db.execute(
+                f"UPDATE {db.schema}.AnalysisSessions SET SessionType = 'Comparison' WHERE Id = ?",
+                (session_id,),
+            )
+            db.commit()
 
             session_ids.append((session_id, display_name))
 
@@ -549,6 +720,13 @@ def _run_add_upload_pipeline(
         log.info(f"  Add-upload: classified {classification.total_classified}/{classification.total_extracted}")
 
         engine._session_repo.update_status(session_id, SessionStatus.CLASSIFIED)
+
+        # Mark as comparison-sourced
+        engine._db.execute(
+            f"UPDATE {engine._db.schema}.AnalysisSessions SET SessionType = 'Comparison' WHERE Id = ?",
+            (session_id,),
+        )
+        engine._db.commit()
 
         # Add to comparison and re-group
         comp.add_erector(comparison_id, session_id)

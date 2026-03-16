@@ -55,7 +55,7 @@ class UserService:
         """Fetch a user by internal ID."""
 
         sql = f"""
-            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt
+            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt, HighlightIntensity
             FROM {self._schema}.Users
             WHERE Id = ?
         """
@@ -83,11 +83,23 @@ class UserService:
         return True
 
 
+    def set_highlight_intensity(self, user_id: int, intensity: str) -> None:
+        """Update a user's highlight intensity preference."""
+
+        valid = {'dim', 'standard', 'bright'}
+        if intensity not in valid:
+            raise ValueError(f"Invalid intensity '{intensity}'. Must be one of: {valid}")
+
+        sql = f"UPDATE {self._schema}.Users SET HighlightIntensity = ? WHERE Id = ?"
+        self._db.execute(sql, (intensity, user_id))
+        self._db.commit()
+
+
     def list_all(self) -> list[User]:
         """List all users ordered by creation date."""
 
         sql = f"""
-            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt
+            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt, HighlightIntensity
             FROM {self._schema}.Users
             ORDER BY CreatedAt DESC
         """
@@ -104,7 +116,7 @@ class UserService:
         """Look up user by Azure Object ID."""
 
         sql = f"""
-            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt
+            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt, HighlightIntensity
             FROM {self._schema}.Users
             WHERE AzureObjectId = ?
         """
@@ -119,7 +131,7 @@ class UserService:
         """Look up user by email address."""
 
         sql = f"""
-            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt
+            SELECT Id, AzureObjectId, Email, DisplayName, Role, CreatedAt, LastLoginAt, HighlightIntensity
             FROM {self._schema}.Users
             WHERE Email = ?
         """
@@ -184,11 +196,12 @@ class UserService:
         """Convert a pyodbc row to a User dataclass."""
 
         return User(
-            id              = row[0],
-            azure_object_id = row[1],
-            email           = row[2],
-            display_name    = row[3],
-            role            = row[4],
-            created_at      = row[5],
-            last_login_at   = row[6],
+            id                  = row[0],
+            azure_object_id     = row[1],
+            email               = row[2],
+            display_name        = row[3],
+            role                = row[4],
+            created_at          = row[5],
+            last_login_at       = row[6],
+            highlight_intensity = row[7] if len(row) > 7 else 'standard',
         )

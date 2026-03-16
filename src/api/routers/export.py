@@ -48,6 +48,33 @@ async def export_scope_letter(
     )
 
 
+@router.get("/session/{session_id}/editor-export")
+async def export_editor_doc(
+        session_id: int,
+        view_mode:  str  = 'full',
+        db   = Depends(get_db),
+        user: User = Depends(require_active_user) ) -> Response:
+    """Export clean .docx from the editor with user edits applied, no highlights."""
+
+    generator = ScopeDocGenerator(db, TEMPLATE_PATH)
+
+    try:
+        docx_bytes, filename = generator.generate_editor_export(session_id, view_mode)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Scope letter template not found on server")
+    except Exception as e:
+        log.error(f"Editor export failed for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Document generation failed: {e}")
+
+    return Response(
+        content     = docx_bytes,
+        media_type  = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers     = {"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/session/{session_id}/scope-letter-data")
 async def get_scope_letter_data(
         session_id: int,

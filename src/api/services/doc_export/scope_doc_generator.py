@@ -183,12 +183,158 @@ class ScopeDocGenerator:
         return buf.getvalue()
 
 
+    def generate_editor_export(
+            self,
+            session_id: int,
+            view_mode:  str = 'full' ) -> tuple[bytes, str]:
+        """Generate a clean (no highlights) .docx respecting editor state."""
+
+        session        = self._load_session(session_id)
+        mappings       = self._load_template_mappings()
+        section_ranges = self._load_section_ranges()
+        editor_state   = self._load_editor_state(session_id)
+
+        # Build lookup sets from editor state
+        removed_paras   = set(editor_state['removed_paragraphs'])
+        removed_regions = {
+            (r['para_index'], r['mfc_exclusion_id'])
+            for r in editor_state['removed_regions']
+        }
+        text_edits = {
+            e['para_index']: e['edited_text']
+            for e in editor_state['text_edits']
+        }
+
+        # Build mapping lookup: para_index -> list of mappings
+        mappings_by_para: dict[int, list[dict]] = defaultdict(list)
+        for mp in mappings:
+            mappings_by_para[mp['ParaIndex']].append(mp)
+
+        # Determine which paragraphs are visible in the current view
+        def para_in_view(idx: int) -> bool:
+            if view_mode == 'full':
+                return True
+
+            for section_name, (range_start, range_end) in section_ranges.items():
+                if section_name == view_mode and range_start <= idx <= range_end:
+                    return True
+
+            return False
+
+        # Load template and process
+        doc          = Document(self._template_path)
+        paras_to_del = []
+
+        for idx, para in enumerate(doc.paragraphs):
+            # Filter by view mode
+            if not para_in_view(idx):
+                paras_to_del.append(para)
+                continue
+
+            # Remove deleted paragraphs
+            if idx in removed_paras:
+                paras_to_del.append(para)
+                continue
+
+            # Apply text edits (user typed replacement)
+            if idx in text_edits:
+                self._replace_para_text(para, text_edits[idx])
+                continue
+
+            # Remove excluded regions (strip char ranges from text)
+            para_mappings = mappings_by_para.get(idx, [])
+            removed_spans = []
+            for mp in para_mappings:
+                key = (idx, mp['MfcExclusionId'])
+                if key in removed_regions:
+                    removed_spans.append((mp['StartChar'], mp['EndChar']))
+
+            if removed_spans:
+                self._strip_char_ranges(para, removed_spans)
+
+        # Delete marked paragraphs (reverse order to preserve indices)
+        for para in reversed(paras_to_del):
+            parent = para._element.getparent()
+            if parent is not None:
+                parent.remove(para._element)
+
+        # Build filename
+        filename = self._build_filename(session).replace('_Scope_Analysis', '_Scope_Letter_Edited')
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+        return buf.getvalue(), filename
+
+
+    @staticmethod
+    def _replace_para_text(para, new_text: str) -> None:
+        """Replace all runs in a paragraph with a single run containing new text."""
+
+        # Preserve formatting from first run
+        first_run  = para.runs[0] if para.runs else None
+        font_name  = first_run.font.name if first_run else None
+        font_size  = first_run.font.size if first_run else None
+        bold       = first_run.bold if first_run else None
+
+        # Clear all existing runs
+        for run in para.runs:
+            run._element.getparent().remove(run._element)
+
+        # Add new run with text
+        new_run = para.add_run(new_text)
+        if font_name: new_run.font.name = font_name
+        if font_size: new_run.font.size = font_size
+        if bold:      new_run.bold      = bold
+
+
+    @staticmethod
+    def _strip_char_ranges(para, spans: list[tuple[int, int]]) -> None:
+        """Remove character ranges from a paragraph, preserving remaining text and formatting."""
+
+        # Sort spans and merge overlapping
+        spans.sort(key=lambda s: s[0])
+        merged = []
+        for start, end in spans:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+
+        # Build set of character positions to remove
+        remove_chars = set()
+        for start, end in merged:
+            for i in range(start, end):
+                remove_chars.add(i)
+
+        if not remove_chars:
+            return
+
+        # Walk runs, rebuild each run's text with removed chars stripped
+        cum_pos = 0
+        for run in para.runs:
+            run_text = run.text or ''
+            if not run_text:
+                continue
+
+            new_chars = []
+            for offset, char in enumerate(run_text):
+                if (cum_pos + offset) not in remove_chars:
+                    new_chars.append(char)
+
+            run.text = ''.join(new_chars)
+            cum_pos += len(run_text)
+
+
     def build_editor_data(self, session_id: int) -> dict:
         """Build structured JSON for the browser scope letter editor."""
 
-        session  = self._load_session(session_id)
-        matches  = self._load_session_matches_full(session_id)
-        mappings = self._load_template_mappings()
+        session        = self._load_session(session_id)
+        matches        = self._load_session_matches_full(session_id)
+        mappings       = self._load_template_mappings()
+        section_ranges = self._load_section_ranges()
+        editor_state   = self._load_editor_state(session_id)
 
         # Build MfcExclusionId -> best match row
         match_lookup: dict[int, dict] = {}
@@ -338,19 +484,27 @@ class ScopeDocGenerator:
 
                 cum_pos += len(run_text)
 
+            # Determine which template section this paragraph belongs to
+            template_section = None
+            for section_name, (range_start, range_end) in section_ranges.items():
+                if range_start <= idx <= range_end:
+                    template_section = section_name
+                    break
+
             paragraphs.append({
-                'index':        idx,
-                'text':         text,
-                'indent':       indent_in,
-                'hanging':      hanging_in,
-                'first_line':   first_line_in,
-                'alignment':    alignment,
-                'space_before': space_before_pt,
-                'space_after':  space_after_pt,
-                'line_spacing': line_spacing,
-                'tab_stops':    tab_stops if tab_stops else None,
-                'segments':     segments,
-                'regions':      para_regions,
+                'index':            idx,
+                'text':             text,
+                'indent':           indent_in,
+                'hanging':          hanging_in,
+                'first_line':       first_line_in,
+                'alignment':        alignment,
+                'space_before':     space_before_pt,
+                'space_after':      space_after_pt,
+                'line_spacing':     line_spacing,
+                'tab_stops':        tab_stops if tab_stops else None,
+                'segments':         segments,
+                'regions':          para_regions,
+                'template_section': template_section,
             })
 
         return {
@@ -360,7 +514,8 @@ class ScopeDocGenerator:
                 'job':      session.get('JobNumber'),
                 'job_name': session.get('JobName'),
             },
-            'paragraphs': paragraphs,
+            'paragraphs':   paragraphs,
+            'editor_state': editor_state,
         }
 
 
@@ -453,6 +608,72 @@ class ScopeDocGenerator:
         cols   = [col[0] for col in cursor.description]
 
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+    def _load_editor_state(self, session_id: int) -> dict:
+        """Load persisted editor state for a session."""
+
+        schema = self._schema
+
+        # Removed regions
+        cursor = self._db.execute(
+            f"SELECT MfcExclusionId, ParaIndex FROM {schema}.EditorRemovedRegions WHERE SessionId = ?",
+            (session_id,),
+        )
+        removed_regions = [
+            {'mfc_exclusion_id': row[0], 'para_index': row[1]}
+            for row in cursor.fetchall()
+        ]
+
+        # Removed paragraphs
+        cursor = self._db.execute(
+            f"SELECT ParaIndex FROM {schema}.EditorRemovedParagraphs WHERE SessionId = ?",
+            (session_id,),
+        )
+        removed_paragraphs = [row[0] for row in cursor.fetchall()]
+
+        # Text edits
+        cursor = self._db.execute(
+            f"SELECT ParaIndex, EditedText FROM {schema}.EditorTextEdits WHERE SessionId = ?",
+            (session_id,),
+        )
+        text_edits = [
+            {'para_index': row[0], 'edited_text': row[1]}
+            for row in cursor.fetchall()
+        ]
+
+        return {
+            'removed_regions':    removed_regions,
+            'removed_paragraphs': removed_paragraphs,
+            'text_edits':         text_edits,
+        }
+
+
+    def _load_section_ranges(self) -> dict[str, tuple[int, int]]:
+        """Load paragraph index ranges for each template section by ScopeType."""
+
+        sql = f"""
+            SELECT me.ScopeType,
+                   MIN(tm.ParaIndex) AS MinPara,
+                   MAX(tm.ParaIndex) AS MaxPara
+            FROM {self._schema}.TemplateMappings tm
+            JOIN {self._schema}.MfcExclusions me ON me.Id = tm.MfcExclusionId
+            GROUP BY me.ScopeType
+        """
+
+        cursor = self._db.execute(sql)
+        ranges = {}
+
+        for row in cursor.fetchall():
+            scope_type = row[0]
+            min_para   = row[1]
+            max_para   = row[2]
+
+            if scope_type == 'Erect':
+                # Include the section header paragraph (one above first mapped para)
+                ranges['erector_exclusions'] = (min_para - 1, max_para)
+
+        return ranges
 
 
     # ── Helpers ──────────────────────────────────────────────────────

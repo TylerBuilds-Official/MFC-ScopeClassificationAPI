@@ -90,21 +90,22 @@ class AnalysisResultOut(BaseModel):
 
 class SessionListItem(BaseModel):
 
-    id:                int
-    erector_name_raw:  str | None = None
-    job_number:        str | None = None
-    job_name:          str | None = None
-    source_file_name:  str | None = None
-    status:            str | None = None
-    total_extracted:   int | None = None
-    total_classified:  int | None = None
-    total_aligned:     int | None = None
+    id:                 int
+    erector_name_raw:   str | None = None
+    job_number:         str | None = None
+    job_name:           str | None = None
+    source_file_name:   str | None = None
+    status:             str | None = None
+    session_type:       str        = 'Standard'
+    total_extracted:    int | None = None
+    total_classified:   int | None = None
+    total_aligned:      int | None = None
     total_erector_only: int | None = None
-    total_mfc_only:    int | None = None
-    total_partial:     int | None = None
-    total_high_risk:   int | None = None
-    created_at:        datetime | None = None
-    completed_at:      datetime | None = None
+    total_mfc_only:     int | None = None
+    total_partial:      int | None = None
+    total_high_risk:    int | None = None
+    created_at:         datetime | None = None
+    completed_at:       datetime | None = None
 
 
 class SessionListResponse(BaseModel):
@@ -331,15 +332,16 @@ class ComparisonResultOut(BaseModel):
 class ComparisonListItem(BaseModel):
     """Summary row for comparison list."""
 
-    id:             int
-    job_number:     str | None = None
-    job_name:       str | None = None
-    status:         str        = "Pending"
-    total_erectors: int        = 0
-    total_unified:  int        = 0
-    initiated_by:   str | None = None
-    created_at:     str | None = None
-    erector_names:  list[str]  = []
+    id:                  int
+    job_number:          str | None = None
+    job_name:            str | None = None
+    status:              str        = "Pending"
+    total_erectors:      int        = 0
+    total_unified:       int        = 0
+    initiated_by:        str | None = None
+    created_at:          str | None = None
+    erector_names:       list[str]  = []
+    selected_session_id: int | None = None
 
 
 class ComparisonListResponse(BaseModel):
@@ -347,3 +349,37 @@ class ComparisonListResponse(BaseModel):
 
     comparisons: list[ComparisonListItem]
     count:       int
+
+
+# ── Editor Persistence ───────────────────────────────────────────────
+
+class EditorRemoveRegionRequest(BaseModel):
+    """Remove an MFC exclusion region from a session."""
+
+    mfc_exclusion_id: int
+    para_index:       int
+
+
+class EditorRemoveParagraphRequest(BaseModel):
+    """Remove a whole paragraph from a session."""
+
+    para_index: int
+
+
+class EditorTextEditRequest(BaseModel):
+    """Save a text edit to a paragraph."""
+
+    para_index:  int
+    edited_text: str
+
+
+class EditorRestoreRegionRequest(BaseModel):
+    """Restore a removed MFC exclusion region."""
+
+    mfc_exclusion_id: int
+
+
+class EditorRestoreParagraphRequest(BaseModel):
+    """Restore a removed paragraph."""
+
+    para_index: int

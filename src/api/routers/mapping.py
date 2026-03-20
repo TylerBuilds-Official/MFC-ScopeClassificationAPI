@@ -26,6 +26,10 @@ class CreateLink(BaseModel):
     mfc_exclusion_id:     int
 
 
+class NotesUpdate(BaseModel):
+    notes: str | None
+
+
 class BulkLink(BaseModel):
     erector_exclusion_ids: list[int]
     mfc_exclusion_id:      int
@@ -232,6 +236,37 @@ async def update_disposition(
     log.info(f"Disposition updated: ErectorExclusion {erector_exclusion_id} → {body.disposition} by {user.display_name}")
 
     return {"erector_exclusion_id": erector_exclusion_id, "disposition": body.disposition}
+
+
+# ── PATCH /erector-exclusions/{id}/notes ─────────────────────────────
+
+@router.patch("/erector-exclusions/{erector_exclusion_id}/notes")
+async def update_notes(
+        erector_exclusion_id: int,
+        body: NotesUpdate,
+        db   = Depends(get_db),
+        user: User = Depends(require_role("estimator", "admin")) ) -> dict:
+    """Set or clear notes on an erector exclusion."""
+
+    cursor = db.execute(
+        f"SELECT Id FROM {db.schema}.ErectorExclusions WHERE Id = ?",
+        (erector_exclusion_id,),
+    )
+
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail=f"Erector exclusion {erector_exclusion_id} not found")
+
+    notes = body.notes.strip() if body.notes else None
+
+    db.execute(
+        f"UPDATE {db.schema}.ErectorExclusions SET Notes = ? WHERE Id = ?",
+        (notes, erector_exclusion_id),
+    )
+    db.commit()
+
+    log.info(f"Notes updated: ErectorExclusion {erector_exclusion_id} by {user.display_name}")
+
+    return {"erector_exclusion_id": erector_exclusion_id, "notes": notes}
 
 
 # ── POST /links ──────────────────────────────────────────────────────
